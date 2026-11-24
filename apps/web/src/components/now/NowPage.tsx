@@ -1,3 +1,4 @@
+import "@fontsource/doto/latin-900.css";
 import "./now.css";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -22,6 +23,7 @@ import {
   type NowEntry,
 } from "./now.logic";
 
+const HOT = "#ff4d1f";
 const TICK_MS = 15_000;
 const DONE_PREVIEW = 6;
 const CARD_SELECTOR = '[data-now~="card"]';
@@ -50,20 +52,14 @@ function DotRing(props: { readonly minutes: number; readonly filled: boolean }) 
   const dots = Array.from({ length: count }, (_, index) => {
     const angle = (index / count) * Math.PI * 2 - Math.PI / 2;
     const on = index < lit;
-    const fill = props.filled
-      ? on
-        ? "var(--primary-foreground)"
-        : "color-mix(in srgb, var(--primary-foreground) 25%, transparent)"
-      : on
-        ? "var(--primary)"
-        : "color-mix(in srgb, var(--foreground) 16%, transparent)";
+    const fill = props.filled ? (on ? "#1a0600" : "#1a060040") : on ? HOT : "#ffffff2a";
     return (
       <circle
         key={index}
         cx={44 + 34 * Math.cos(angle)}
         cy={44 + 34 * Math.sin(angle)}
         r={on ? 1.9 : 1.2}
-        style={{ fill }}
+        fill={fill}
       />
     );
   });
@@ -74,9 +70,10 @@ function DotRing(props: { readonly minutes: number; readonly filled: boolean }) 
         x="44"
         y="51"
         textAnchor="middle"
-        fontWeight={600}
+        fontFamily="Doto, monospace"
+        fontWeight={900}
         fontSize="20"
-        style={{ fill: props.filled ? "var(--primary-foreground)" : "var(--foreground)" }}
+        fill={props.filled ? "#1a0600" : "#f2f1ee"}
       >
         {props.minutes > 99 ? "99+" : props.minutes}m
       </text>
@@ -95,14 +92,7 @@ function DotBars(props: { readonly seed: number }) {
           cx={5 + column * 9.2}
           cy={60 - row * 8.5}
           r="1.7"
-          style={{
-            fill:
-              row < height
-                ? column > 16
-                  ? "var(--primary)"
-                  : "var(--muted-foreground)"
-                : "color-mix(in srgb, var(--foreground) 8%, transparent)",
-          }}
+          fill={row < height ? (column > 16 ? HOT : "#d7dbe2") : "#ffffff12"}
         />,
       );
     }
@@ -242,7 +232,7 @@ function NowCard(props: {
         aria-label={gt("Open thread")}
         onClick={open}
       >
-        <ArrowUpRightIcon size={14} />
+        <ArrowUpRightIcon size={15} color="#f2f1ee" />
       </button>
     </div>
   );
@@ -256,7 +246,7 @@ function Counter(props: {
 }) {
   return (
     <div data-now="num">
-      <b data-now="dot" style={props.dim ? { color: "var(--muted-foreground)" } : undefined}>
+      <b data-now="dot" style={props.dim ? { color: "#7c7b80" } : undefined}>
         {String(props.value).padStart(2, "0")}
       </b>
       <small>
@@ -410,14 +400,9 @@ export function NowPage() {
           </div>
         </div>
         <div data-now="nums">
-          <Counter value={board.needs.length} label={gt("need you")} color="var(--primary)" />
-          <Counter value={board.running.length} label={gt("running")} color="var(--success)" />
-          <Counter
-            value={board.done.length}
-            label={gt("to review")}
-            color="var(--muted-foreground)"
-            dim
-          />
+          <Counter value={board.needs.length} label={gt("need you")} color={HOT} />
+          <Counter value={board.running.length} label={gt("running")} color="#d7dbe2" />
+          <Counter value={board.done.length} label={gt("to review")} color="#555" dim />
         </div>
         <span data-now="grow" />
         <div data-now="pills">
@@ -437,7 +422,7 @@ export function NowPage() {
       </header>
 
       <main data-now="body">
-        <SectionHeader title={gt("Your turn")} count={needs.length} countColor="var(--primary)" />
+        <SectionHeader title={gt("Your turn")} count={needs.length} countColor={HOT} />
         {needs.length > 0 ? (
           <div data-now="grid">{needs.map((entry, index) => renderCard(entry, index === 0))}</div>
         ) : (
