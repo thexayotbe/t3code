@@ -1,5 +1,9 @@
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
-import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  effectiveSnoozed,
+  hasUnseenRunFailure,
+} from "@t3tools/client-runtime/state/thread-settled";
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 export type NowAttention = "approval" | "input" | "plan" | "subagent" | "guest" | "failed";
@@ -34,17 +38,20 @@ export function nowAttention(thread: EnvironmentThreadShell): NowAttention | nul
   if (thread.pendingSubagentRequest != null) return "subagent";
   if (thread.interactionMode === "plan" && thread.hasActionableProposedPlan) return "plan";
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return "guest";
-  if (thread.runtime?.lastError != null || thread.latestRun?.status === "failed") return "failed";
+  // Only a failure the user has not looked at yet; an old one is not waiting on anyone.
+  if (hasUnseenRunFailure(thread)) return "failed";
   return null;
 }
 
-function startOfLocalDay(nowMs: number): number {
-  const date = new Date(nowMs);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
+/** The same test the sidebar uses: parked by the user or auto-settled by the server. */
+function isSettled(thread: EnvironmentThreadShell): boolean {
+  return thread.settledOverride === "settled" || thread.settledAt != null;
 }
 
 function waitingSinceMs(thread: EnvironmentThreadShell, attention: NowAttention): number | null {
+  if (attention === "failed") {
+    return parseMs(thread.latestRun?.completedAt) ?? parseMs(thread.latestRun?.startedAt);
+  }
   if (attention === "input") return parseMs(thread.pendingUserInputAt) ?? parseMs(thread.updatedAt);
   return parseMs(thread.runtime?.updatedAt) ?? parseMs(thread.updatedAt);
 }
@@ -55,7 +62,6 @@ export function buildNowBoard(
   nowMs: number,
 ): NowBoard {
   const nowIso = new Date(nowMs).toISOString();
-  const dayStart = startOfLocalDay(nowMs);
   const needs: NowEntry[] = [];
   const running: NowEntry[] = [];
   const done: NowEntry[] = [];
@@ -63,7 +69,8 @@ export function buildNowBoard(
 
   for (const thread of threads) {
     if (thread.archivedAt != null || thread.deletedAt != null) continue;
-    if (effectiveSnoozed(thread, { now: nowIso })) {
+    // Settled and snoozed threads are out of the inbox, so they stay out of Now too.
+    if (isSettled(thread) || effectiveSnoozed(thread, { now: nowIso })) {
       quietCount += 1;
       continue;
     }
@@ -72,19 +79,17 @@ export function buildNowBoard(
       needs.push({ thread, group: "needs", attention, sinceMs: waitingSinceMs(thread, attention) });
       continue;
     }
-    if (isThreadWorking(thread) && thread.runtime?.status !== "idle") {
+    // A run in flight (including one waiting on a tool or a queue), not an idle thread.
+    if (threadRuntimeIsActive(thread.runtime) && isThreadWorking(thread)) {
       const since =
         parseMs(thread.runtime?.activityStartedAt) ?? parseMs(thread.latestRun?.startedAt);
       running.push({ thread, group: "running", attention: null, sinceMs: since });
       continue;
     }
-    const completedMs = parseMs(thread.latestRun?.completedAt);
-    if (
-      thread.latestRun?.status === "completed" &&
-      completedMs !== null &&
-      completedMs >= dayStart
-    ) {
-      done.push({ thread, group: "done", attention: null, sinceMs: completedMs });
+    // Idle and not settled yet: finished work waiting for the user to look at it and settle it.
+    const finishedMs = parseMs(thread.latestRun?.completedAt);
+    if (thread.latestRun !== null && finishedMs !== null) {
+      done.push({ thread, group: "done", attention: null, sinceMs: finishedMs });
       continue;
     }
     quietCount += 1;

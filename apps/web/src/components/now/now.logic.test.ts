@@ -72,13 +72,13 @@ describe("nowAttention", () => {
 });
 
 describe("buildNowBoard", () => {
-  it("groups needs, running and done today and counts the rest as quiet", () => {
+  it("groups needs, running and finished-unsettled and counts the rest as quiet", () => {
     const board = buildNowBoard(
       [
         shell("needs", { hasPendingApprovals: true }),
         shell("running", { runtime: runtime("running"), latestRun: run("running") }),
         shell("done", { latestRun: run("completed", 20) }),
-        shell("old", { latestRun: run("completed", 60 * 24 * 3) }),
+        shell("settled", { latestRun: run("completed", 20), settledAt: iso(10) }),
         shell("never"),
       ],
       NOW,
@@ -115,6 +115,16 @@ describe("buildNowBoard", () => {
       NOW,
     );
     expect(board.needs.map((entry) => entry.thread.id)).toEqual(["oldest", "recent"]);
+  });
+});
+
+describe("failures", () => {
+  it("needs the user only while the failure is unseen", () => {
+    const failed = { latestRun: run("failed", 60 * 24 * 37) };
+    const unseen = buildNowBoard([shell("unseen", failed)], NOW);
+    expect(unseen.needs.map((entry) => entry.thread.id)).toEqual(["unseen"]);
+    const seen = buildNowBoard([shell("seen", { ...failed, lastVisitedAt: iso(5) })], NOW);
+    expect(seen.needs).toEqual([]);
   });
 });
 

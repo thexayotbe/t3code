@@ -10,6 +10,8 @@ import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
 import { useProjects, useVisibleThreadShells } from "../../state/entities";
+import { threadEnvironment } from "../../state/threads";
+import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useNavigateToMainApp } from "../sidebar/mainAppLocation";
 import { NowNeedsActions } from "./NowNeedsActions";
@@ -23,6 +25,7 @@ import {
 
 const HOT = "#ff4d1f";
 const TICK_MS = 15_000;
+const DONE_PREVIEW = 6;
 const CARD_SELECTOR = '[data-now~="card"]';
 
 function useNowMs(): number {
@@ -72,7 +75,7 @@ function DotRing(props: { readonly minutes: number; readonly filled: boolean }) 
         fontSize="20"
         fill={props.filled ? "#1a0600" : "#f2f1ee"}
       >
-        {props.minutes}m
+        {props.minutes > 99 ? "99+" : props.minutes}m
       </text>
     </svg>
   );
@@ -135,6 +138,7 @@ function NowCard(props: {
   readonly onOpen: (thread: EnvironmentThreadShell) => void;
 }) {
   const gt = useGT();
+  const settle = useOrchestrationCommand(threadEnvironment.settle, { reportFailure: false });
   const { entry, nowMs } = props;
   const { thread } = entry;
   const filled = props.hottest && entry.group === "needs";
@@ -205,6 +209,18 @@ function NowCard(props: {
                 label={gt("Finished")}
                 value={`${formatNowMinutes(entry.sinceMs, nowMs)} ${gt("ago")}`}
               />
+              <button
+                type="button"
+                data-now="act"
+                onClick={() =>
+                  void settle({
+                    environmentId: thread.environmentId,
+                    input: { threadId: thread.id },
+                  })
+                }
+              >
+                <T>Settle</T>
+              </button>
             </span>
           </>
         )}
@@ -288,6 +304,7 @@ export function NowPage() {
   const projects = useProjects();
   const nowMs = useNowMs();
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
+  const [showAllDone, setShowAllDone] = useState(false);
 
   const close = () => void navigateToMainApp();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window key listener (Esc closes the screen) removed on unmount
@@ -327,7 +344,8 @@ export function NowPage() {
       : entries.filter((entry) => nameOf(entry.thread) === projectFilter);
   const needs = visible(board.needs);
   const running = visible(board.running);
-  const done = visible(board.done);
+  const allDone = visible(board.done);
+  const done = showAllDone ? allDone : allDone.slice(0, DONE_PREVIEW);
 
   const openThread = (thread: EnvironmentThreadShell) => {
     void navigate({
@@ -384,7 +402,7 @@ export function NowPage() {
         <div data-now="nums">
           <Counter value={board.needs.length} label={gt("need you")} color={HOT} />
           <Counter value={board.running.length} label={gt("running")} color="#d7dbe2" />
-          <Counter value={board.done.length} label={gt("done today")} color="#555" dim />
+          <Counter value={board.done.length} label={gt("to review")} color="#555" dim />
         </div>
         <span data-now="grow" />
         <div data-now="pills">
@@ -426,9 +444,15 @@ export function NowPage() {
           </div>
         )}
 
-        {done.length > 0 ? (
+        {allDone.length > 0 ? (
           <>
-            <SectionHeader title={gt("Done today")} count={done.length} />
+            <SectionHeader title={gt("Finished")} count={allDone.length}>
+              {allDone.length > DONE_PREVIEW ? (
+                <Pill active={showAllDone} onClick={() => setShowAllDone(!showAllDone)}>
+                  {showAllDone ? gt("Show fewer") : `${gt("Show all")} ${allDone.length}`}
+                </Pill>
+              ) : null}
+            </SectionHeader>
             <div data-now="grid">{done.map((entry) => renderCard(entry, false))}</div>
           </>
         ) : null}
