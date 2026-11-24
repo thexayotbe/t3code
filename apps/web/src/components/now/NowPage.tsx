@@ -4,14 +4,15 @@ import "./now.css";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowUpRightIcon } from "lucide-react";
+import { ArrowUpRightIcon, XIcon } from "lucide-react";
 import { T, useGT } from "gt-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 
+import { isElectron } from "../../env";
 import { useProjects, useVisibleThreadShells } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { SidebarInset } from "../ui/sidebar";
-import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { useNavigateToMainApp } from "../sidebar/mainAppLocation";
+import { NowNeedsActions } from "./NowNeedsActions";
 import {
   buildNowBoard,
   formatNowMinutes,
@@ -22,6 +23,7 @@ import {
 
 const HOT = "#ff4d1f";
 const TICK_MS = 15_000;
+const CARD_SELECTOR = '[data-now~="card"]';
 
 function useNowMs(): number {
   const [now, setNow] = useState(() => Date.now());
@@ -136,26 +138,51 @@ function NowCard(props: {
   const { entry, nowMs } = props;
   const { thread } = entry;
   const filled = props.hottest && entry.group === "needs";
+  const inline = entry.attention === "approval" || entry.attention === "input";
+
+  const open = () => props.onOpen(thread);
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.target === event.currentTarget && event.key === "Enter") {
+      event.preventDefault();
+      open();
+    }
+  };
 
   return (
     <div data-now="wrap">
-      <button type="button" data-now="card" data-fill={filled} onClick={() => props.onOpen(thread)}>
+      <article
+        data-now="card"
+        data-fill={filled}
+        data-group={entry.group}
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+      >
         <span data-now="mono">{props.projectName}</span>
-        <h3>{thread.title}</h3>
+        <h3>
+          <button type="button" data-now="title" onClick={open}>
+            {thread.title}
+          </button>
+        </h3>
         {entry.group === "needs" ? (
           <>
-            <span data-now="hint">
-              {thread.runtime?.lastError ?? gt("Open the thread to respond.")}
-            </span>
-            <span data-now="viz">
-              <DotRing minutes={waitRingMinutes(entry.sinceMs, nowMs)} filled={filled} />
-            </span>
+            {inline ? (
+              <NowNeedsActions thread={thread} />
+            ) : (
+              <>
+                <span data-now="hint">
+                  {thread.runtime?.lastError ?? gt("Open the thread to respond.")}
+                </span>
+                <span data-now="viz">
+                  <DotRing minutes={waitRingMinutes(entry.sinceMs, nowMs)} filled={filled} />
+                </span>
+              </>
+            )}
             <span data-now="foot">
               <span data-now="chip">
                 {entry.attention ? attentionLabel(entry.attention, gt) : null}
               </span>
               <span data-now="chip" data-hot="true">
-                <T>Open</T>
+                {gt("waiting")} {formatNowMinutes(entry.sinceMs, nowMs)}
               </span>
             </span>
           </>
@@ -181,10 +208,16 @@ function NowCard(props: {
             </span>
           </>
         )}
-      </button>
-      <span data-now="go" data-fill={filled} aria-hidden="true">
+      </article>
+      <button
+        type="button"
+        data-now="go"
+        data-fill={filled}
+        aria-label={gt("Open thread")}
+        onClick={open}
+      >
         <ArrowUpRightIcon size={15} color="#f2f1ee" />
-      </span>
+      </button>
     </div>
   );
 }
@@ -240,17 +273,42 @@ function Pill(props: {
   );
 }
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+  );
+}
+
 export function NowPage() {
   const gt = useGT();
   const navigate = useNavigate();
+  const navigateToMainApp = useNavigateToMainApp();
   const threads = useVisibleThreadShells();
   const projects = useProjects();
   const nowMs = useNowMs();
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
 
+  const close = () => void navigateToMainApp();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window key listener (Esc closes the screen) removed on unmount
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (isTypingTarget(event.target)) {
+        (event.target as HTMLElement).blur();
+        return;
+      }
+      event.preventDefault();
+      void navigateToMainApp();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigateToMainApp]);
+
   const projectNames = new Map<string, string>();
-  for (const project of projects)
+  for (const project of projects) {
     projectNames.set(`${project.environmentId}:${project.id}`, project.title);
+  }
   const nameOf = (thread: EnvironmentThreadShell) =>
     projectNames.get(`${thread.environmentId}:${thread.projectId}`) ?? "";
 
@@ -278,6 +336,25 @@ export function NowPage() {
     });
   };
 
+  // Arrow keys walk the cards in reading order while a card (not a field inside one) has focus.
+  const onScreenKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    if (!target.matches(CARD_SELECTOR)) return;
+    const step =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (step === 0) return;
+    const cards = [...event.currentTarget.querySelectorAll<HTMLElement>(CARD_SELECTOR)];
+    const next = cards[cards.indexOf(target) + step];
+    if (next === undefined) return;
+    event.preventDefault();
+    next.focus();
+    next.scrollIntoView({ block: "nearest" });
+  };
+
   const renderCard = (entry: NowEntry, hottest: boolean) => (
     <NowCard
       key={`${entry.thread.environmentId}:${entry.thread.id}`}
@@ -290,73 +367,72 @@ export function NowPage() {
   );
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
-      <WorkspacePageHeader />
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 scrollbar-gutter-both sm:px-6">
-        <div data-now="root">
-          <div data-now="head">
-            <div>
-              <h1 data-now="dot title">NOW</h1>
-              <div data-now="mono" style={{ marginTop: 10 }}>
-                {new Date(nowMs).toLocaleString(undefined, {
-                  weekday: "short",
-                  day: "numeric",
-                  month: "short",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </div>
-            </div>
-            <div data-now="nums">
-              <Counter value={board.needs.length} label={gt("need you")} color={HOT} />
-              <Counter value={board.running.length} label={gt("running")} color="#d7dbe2" />
-              <Counter value={board.done.length} label={gt("done today")} color="#555" dim />
-            </div>
+    <div data-now="screen" onKeyDown={onScreenKeyDown}>
+      <header data-now="bar" data-electron={isElectron}>
+        <div>
+          <h1 data-now="dot title-big">NOW</h1>
+          <div data-now="mono" style={{ marginTop: 6 }}>
+            {new Date(nowMs).toLocaleString(undefined, {
+              weekday: "short",
+              day: "numeric",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
           </div>
-
-          <SectionHeader title={gt("Your turn")} count={needs.length} countColor={HOT}>
-            <Pill active={projectFilter === null} onClick={() => setProjectFilter(null)}>
-              <T>All</T>
-            </Pill>
-            {projectOptions.map((name) => (
-              <Pill
-                key={name}
-                active={projectFilter === name}
-                onClick={() => setProjectFilter(name)}
-              >
-                {name}
-              </Pill>
-            ))}
-          </SectionHeader>
-          {needs.length > 0 ? (
-            <div data-now="grid">{needs.map((entry, index) => renderCard(entry, index === 0))}</div>
-          ) : (
-            <div data-now="empty">
-              <T>Nothing is waiting on you.</T>
-            </div>
-          )}
-
-          <SectionHeader title={gt("Running")} count={running.length}>
-            <span data-now="mono">
-              {board.quietCount} {gt("quiet threads hidden")}
-            </span>
-          </SectionHeader>
-          {running.length > 0 ? (
-            <div data-now="grid">{running.map((entry) => renderCard(entry, false))}</div>
-          ) : (
-            <div data-now="empty">
-              <T>Nothing is running.</T>
-            </div>
-          )}
-
-          {done.length > 0 ? (
-            <>
-              <SectionHeader title={gt("Done today")} count={done.length} />
-              <div data-now="grid">{done.map((entry) => renderCard(entry, false))}</div>
-            </>
-          ) : null}
         </div>
-      </div>
-    </SidebarInset>
+        <div data-now="nums">
+          <Counter value={board.needs.length} label={gt("need you")} color={HOT} />
+          <Counter value={board.running.length} label={gt("running")} color="#d7dbe2" />
+          <Counter value={board.done.length} label={gt("done today")} color="#555" dim />
+        </div>
+        <span data-now="grow" />
+        <div data-now="pills">
+          <Pill active={projectFilter === null} onClick={() => setProjectFilter(null)}>
+            <T>All</T>
+          </Pill>
+          {projectOptions.map((name) => (
+            <Pill key={name} active={projectFilter === name} onClick={() => setProjectFilter(name)}>
+              {name}
+            </Pill>
+          ))}
+        </div>
+        <button type="button" data-now="close" aria-label={gt("Close Now")} onClick={close}>
+          <XIcon size={16} />
+          <span data-now="mono">Esc</span>
+        </button>
+      </header>
+
+      <main data-now="body">
+        <SectionHeader title={gt("Your turn")} count={needs.length} countColor={HOT} />
+        {needs.length > 0 ? (
+          <div data-now="grid">{needs.map((entry, index) => renderCard(entry, index === 0))}</div>
+        ) : (
+          <div data-now="empty">
+            <T>Nothing is waiting on you.</T>
+          </div>
+        )}
+
+        <SectionHeader title={gt("Running")} count={running.length}>
+          <span data-now="mono">
+            {board.quietCount} {gt("quiet threads hidden")}
+          </span>
+        </SectionHeader>
+        {running.length > 0 ? (
+          <div data-now="grid">{running.map((entry) => renderCard(entry, false))}</div>
+        ) : (
+          <div data-now="empty">
+            <T>Nothing is running.</T>
+          </div>
+        )}
+
+        {done.length > 0 ? (
+          <>
+            <SectionHeader title={gt("Done today")} count={done.length} />
+            <div data-now="grid">{done.map((entry) => renderCard(entry, false))}</div>
+          </>
+        ) : null}
+      </main>
+    </div>
   );
 }

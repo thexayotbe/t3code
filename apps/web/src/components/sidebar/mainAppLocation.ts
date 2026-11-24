@@ -55,6 +55,11 @@ export function getAppModalReturnThreadTarget() {
   return appModalReturnThreadTarget;
 }
 
+/** Leaves a sidebar utility page for the last main-app view, outside React. */
+export function navigateToMainApp(router: AnyRouter) {
+  return router.navigate({ href: mainAppHref ?? "/" });
+}
+
 export function useNavigateToMainApp() {
   const navigate = useNavigate();
   return () => navigate({ href: mainAppHref ?? "/" });

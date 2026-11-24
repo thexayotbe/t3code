@@ -16,6 +16,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { type CommandHandler, type CommandScopeOptions, registerCommands } from "./dispatcher";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
+import { navigateToMainApp } from "../components/sidebar/mainAppLocation";
 
 function consume(event: KeyboardEvent): void {
   event.preventDefault();
@@ -102,7 +103,9 @@ export function installCommandPaletteCommands(
       "now.open": (event) => {
         consume(event);
         dispatchCommandPalette({ _tag: "SetOpen", open: false });
-        void router.navigate({ to: "/now" });
+        // The same shortcut closes the screen again.
+        if (router.state.location.pathname === "/now") void navigateToMainApp(router);
+        else void router.navigate({ to: "/now" });
       },
       "commandPalette.toggle": toggleOverlay("commandPalette.toggle"),
       "filePicker.toggle": toggleOverlay("filePicker.toggle"),
